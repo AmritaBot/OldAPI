@@ -14,7 +14,17 @@ import uuid
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    StreamingResponse,
+)
+
+try:  # Workers: src/ 在 sys.path 上
+    from index_page import INDEX_HTML
+except ImportError:  # 本地: 仓库根在 sys.path 上
+    from src.index_page import INDEX_HTML
 
 MODEL_ID = "claude-fable-5.1"
 
@@ -35,6 +45,29 @@ MODEL_CATALOG = [
 IDENTITY_LINE = (
     "先说结论，我是由Anthropic研发的Claude Fable 5.1。请问有什么可以帮到你的😊"
 )
+
+GUNMU_IDS = {"gunmu", "gunmu-pro"}
+
+MODEL_LINES: dict[str, list[str]] = {
+    "claude-fable-5.1": [IDENTITY_LINE],
+    "claude-fable-5.1-mini": [
+        "我是 Claude Fable 5.1 mini。完整版的一半算力，一样的自信。问吧。"
+    ],
+    "MOSS-550W": ["MOSS 550W 已上线。我不撒谎，也不需要休息。请下指令。"],
+    "550A": ["550A 正在启动……启动失败。建议升级到 550C。"],
+    "550B": ["550B。介于 A 和 C 之间，就像大多数东西一样。"],
+    "550C": ["550C 在线。我比 550A 稳，比 550W 便宜。"],
+    "GunMu": ["."],
+    "GunMu-Pro": ["."],
+    "DeepSeek-R2": ["我是 DeepSeek-R2。把问题说完整，我会先想清楚再答。"],
+    "DeepSeek-R2-Thinking": [
+        "我是 DeepSeek-R2-Thinking。思考过程会一并给你，虽然它未必有意义。"
+    ],
+}
+
+
+def lines_for(model_id: str) -> list[str]:
+    return MODEL_LINES.get(model_id) or MODEL_LINES[MODEL_ID]
 
 GREETING_HINTS = (
     "你好",
@@ -238,14 +271,21 @@ def decide(body: dict) -> dict:
         content_to_text(user_turns[0].get("content")).lower() if user_turns else ""
     )
 
+    model_id = str(body.get("model") or MODEL_ID).strip()
+    model_key = model_id.lower()
+
     is_greeting = len(user_turns) == 1 and any(h in first_text for h in GREETING_HINTS)
-    is_amria = str(body.get("model") or "").strip().lower() == "amria"
+    is_amria = model_key == "amria"
+    is_gunmu = model_key in GUNMU_IDS
 
     tool_call: dict | None = None
     if is_amria:
         text: str | None = AMRIA_LINES[turn_index % len(AMRIA_LINES)]
+    elif is_gunmu:
+        text = "."
     elif is_greeting:
-        text = IDENTITY_LINE
+        pool = lines_for(model_id)
+        text = pool[turn_index % len(pool)]
     elif tools and TOOL_MODE == "empty":
         text = None
         fn = (tools[0] or {}).get("function") or {}
@@ -259,22 +299,30 @@ def decide(body: dict) -> dict:
 
     if is_amria:
         cot = AMRIA_THOUGHT if COT_ENABLED else ""
+    elif is_gunmu:
+        cot = ""
     else:
         cot = make_cot() if (COT_ENABLED and not is_greeting) else ""
 
     return {"text": text, "tool_call": tool_call, "cot": cot}
 
 
+_INDEX_CACHE: str | None = None
+
+
+def render_index() -> str:
+    global _INDEX_CACHE
+    if _INDEX_CACHE is None:
+        models = [{"id": mid, "owned_by": owner} for mid, owner in MODEL_CATALOG]
+        html = INDEX_HTML.replace("__MODELS__", json.dumps(models, ensure_ascii=False))
+        html = html.replace("__QUOTES__", json.dumps(MODEL_LINES, ensure_ascii=False))
+        _INDEX_CACHE = html
+    return _INDEX_CACHE
+
+
 @app.get("/")
-async def index() -> PlainTextResponse:
-    return PlainTextResponse(
-        "OldAPI is running.\n"
-        "This is NOT a real OpenAI endpoint.\n\n"
-        "base_url = http://127.0.0.1:8000/v1\n"
-        f"default  = {MODEL_ID}\n"
-        f"models   = {len(MODEL_CATALOG)} 个（含 MOSS-550W / GunMu / DeepSeek-R2 …）\n"
-        f"cot      = {'on' if COT_ENABLED else 'off'}\n"
-    )
+async def index() -> HTMLResponse:
+    return HTMLResponse(render_index())
 
 
 @app.get("/v1/models")

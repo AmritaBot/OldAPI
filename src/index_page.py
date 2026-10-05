@@ -1,4 +1,9 @@
-<!doctype html>
+"""OldAPI 主页模板（内联字符串，兼容 Workers 无文件系统的运行时）。
+
+``__MODELS__`` / ``__QUOTES__`` 两个占位符由 src/app.py 在首次请求时替换。
+"""
+
+INDEX_HTML = r"""<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -144,3 +149,4 @@ modal.addEventListener('click', e => { if (e.target === modal) modal.classList.r
 </script>
 </body>
 </html>
+"""
