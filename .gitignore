@@ -50,3 +50,14 @@ Thumbs.db
 # ---- 运行期产生的东西 ----
 *.pid
 *.sock
+
+# ---- Cloudflare Workers ----
+node_modules/
+.wrangler/
+.dev.vars
+# pywrangler / uv 生成物
+.venv-workers/
+python_modules/
+src/vendor/
+pylock.toml
+uv.lock

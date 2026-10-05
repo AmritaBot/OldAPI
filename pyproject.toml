@@ -1,0 +1,18 @@
+[project]
+name = "OldAPI"
+version = "0.2.0"
+description = "OldAPI —— OpenAI 兼容的整蛊端点（Cloudflare Python Worker）"
+requires-python = ">=3.12"
+# 只有这里的依赖会被 pywrangler 打进 Worker（src/vendor/）。
+dependencies = [
+    "fastapi",
+]
+
+[dependency-groups]
+# 本地工具链：workers-* 供 pywrangler 使用，uvicorn 仅供本地 server.py 使用。
+# dev 组不会被 pywrangler 打包进 Worker。
+dev = [
+    "workers-py",
+    "workers-runtime-sdk",
+    "uvicorn[standard]>=0.27",
+]
