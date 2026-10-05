@@ -1,0 +1,52 @@
+# ---- 虚拟环境 ----
+.venv/
+venv/
+env/
+ENV/
+
+# ---- Python 缓存与编译产物 ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ---- 测试与覆盖率 ----
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ---- 日志与临时文件 ----
+*.log
+logs/
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*~
+*.swp
+*.swo
+
+# ---- 编辑器 / 系统 ----
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db
+
+# ---- 本地环境变量与密钥 ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---- 运行期产生的东西 ----
+*.pid
+*.sock
