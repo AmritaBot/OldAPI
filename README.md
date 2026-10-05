@@ -1,6 +1,7 @@
-# fakegpt
+# OldAPI
 
-一个「OpenAI 兼容」端点的整蛊后端（本地版，Python + FastAPI）。
+一个「OpenAI 兼容」端点的整蛊后端（Python + FastAPI）。
+同一份应用代码可以跑在本地（uvicorn），也可以跑在 Cloudflare Workers（Python Worker）。
 
 ## 它做什么
 
@@ -64,11 +65,32 @@ curl -s http://127.0.0.1:8000/v1/chat/completions \
 流式顺序：`role` 块 → `reasoning_content` 分块 → 正文分块 →
 `finish_reason` → （可选 usage）→ `data: [DONE]`。
 
-## 安装与运行
+## 项目结构
+
+```
+server.py          本地运行入口（uvicorn + 命令行参数）
+src/app.py         FastAPI 应用本体（全部业务逻辑，与运行时无关）
+src/worker.py      Cloudflare Workers 入口（把 app 接到 ASGI 适配器）
+wrangler.jsonc     Workers 配置
+pyproject.toml     依赖声明（fastapi 打进 Worker；uvicorn 仅本地用）
+package.json       wrangler 的 npm 脚本
+.nvmrc             固定 Node 22（wrangler 4.x 要求）
+```
+
+应用本体只有一份（`src/app.py`），两条运行路径都指向它，行为完全一致。
+
+> 说明：原来根目录的 `requirements.txt` 已并入 `pyproject.toml`。
+> `pywrangler` 遇到根目录的 `requirements.txt` 会直接报错退出，所以必须合并。
+
+## 本地运行（uvicorn）
 
 ```bash
+# 用 uv（推荐，自动读取 pyproject.toml 并装好 dev 组依赖）
+uv run server.py --port 8000
+
+# 或者不用 uv：
 python3 -m venv .venv
-./.venv/bin/pip install -r requirements.txt
+./.venv/bin/pip install "fastapi>=0.110" "uvicorn[standard]>=0.27"
 ./.venv/bin/python server.py --port 8000
 ```
 
@@ -83,12 +105,45 @@ python3 -m venv .venv
 --cot-len     思考过程最少字数，默认 1400
 ```
 
+## 运行在 Cloudflare Workers
+
+前置条件：
+
+- **Node.js >= 22**（wrangler 4.x 的硬性要求，仓库里放了 `.nvmrc`）
+- `uv`（pywrangler 用它解析依赖）
+- 依赖装在本地：`npm install`（会装 `wrangler`）
+- 部署前需要登录：`npx wrangler login`
+
+```bash
+# 本地起 workerd（默认 http://localhost:8787）
+uv run pywrangler dev
+
+# 部署到 Cloudflare
+uv run pywrangler deploy
+```
+
+`pywrangler dev` / `deploy` 会先自动执行 `pywrangler sync`，把 `pyproject.toml`
+里 `[project.dependencies]` 的依赖装进 `python_modules/`（打包进 Worker）。
+
+Worker 里没有命令行参数，使用与 `server.py` 默认值完全相同的一套配置：
+`tool-mode=empty`、`cot=on`、`delay=0.02`、`cot-len=1400`。
+因此 base_url 变成：
+
+```
+http://localhost:8787/v1        # 本地 workerd
+https://<你的 worker 名>.<账号>.workers.dev/v1   # 部署后
+```
+
+> 首次请求要等 Pyodide 冷启动（本地实测约 3 分钟），之后都是毫秒级。
+
 ## 接到客户端
 
 把客户端（Cherry Studio / NextChat / 各种 OpenAI SDK）的 base_url 指向：
 
 ```
-http://127.0.0.1:8000/v1
+http://127.0.0.1:8000/v1                          # 本地 server.py
+http://localhost:8787/v1                          # 本地 pywrangler dev
+https://<你的 worker 名>.<账号>.workers.dev/v1     # 部署后的 Worker
 ```
 
 API Key 随便填。
@@ -102,6 +157,19 @@ API Key 随便填。
 - 带 `tools` → `finish_reason: tool_calls`，`arguments` 为 `{}`
 - 非流式响应里，`reasoning_content` 直接挂在 message 上
 - `model: amria` → 彩蛋语气，大小写不敏感，`model` 字段原样回显
+
+以上行为在**本地 uvicorn（`server.py`）**和**Cloudflare Workers（`src/worker.py`）**
+两条路径上都逐一验证过，响应字段一致。
+`server.py` 的 `--tool-mode ignore` / `--no-cot` 等参数也确认能正确生效。
+
+## 与原始版本的差异
+
+- `server.py` 里的 FastAPI 应用与业务逻辑整体移到了 `src/app.py`，**逐行未改**；
+  `server.py` 现在只剩命令行解析 + uvicorn 启动。
+- `requirements.txt` 已删除，依赖并入 `pyproject.toml`
+  （`pywrangler` 遇到根目录的 `requirements.txt` 会直接报错退出，必须合并）。
+- `/` 端点里那行 `base_url = http://127.0.0.1:8000/v1` 是原版写死的字符串，
+  在 Worker 上也会原样输出——为保持原样故意没改。
 
 ## 边界说明
 
