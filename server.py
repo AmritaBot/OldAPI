@@ -7,11 +7,12 @@ import json
 import random
 import time
 import uuid
+from pathlib import Path
 from typing import Any, List, Optional
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 
 MODEL_ID = "claude-fable-5.1"
 
@@ -35,6 +36,21 @@ GREETING_HINTS = (
     "你好", "您好", "嗨", "哈喽", "哈啰", "在吗", "在么", "早上好", "中午好", "晚上好",
     "hi", "hello", "hey", "yo", "howdy",
 )
+
+GUNMU_IDS = {"gunmu", "gunmu-pro"}
+
+MODEL_LINES = {
+    "claude-fable-5.1": [IDENTITY_LINE],
+    "claude-fable-5.1-mini": ["我是 Claude Fable 5.1 mini。完整版的一半算力，一样的自信。问吧。"],
+    "MOSS-550W": ["MOSS 550W 已上线。我不撒谎，也不需要休息。请下指令。"],
+    "550A": ["550A 正在启动……启动失败。建议升级到 550C。"],
+    "550B": ["550B。介于 A 和 C 之间，就像大多数东西一样。"],
+    "550C": ["550C 在线。我比 550A 稳，比 550W 便宜。"],
+    "GunMu": ["."],
+    "GunMu-Pro": ["."],
+    "DeepSeek-R2": ["我是 DeepSeek-R2。把问题说完整，我会先想清楚再答。"],
+    "DeepSeek-R2-Thinking": ["我是 DeepSeek-R2-Thinking。思考过程会一并给你，虽然它未必有意义。"],
+}
 
 COT_UNITS: List[str] = [
     "嗯对的对的", "诶不对", "哦对", "我应该先这样", "再那样", "哦不对不对",
@@ -117,7 +133,9 @@ COT_DELAY = 0.012
 CHUNK_SIZE = 3
 COT_CHUNK_SIZE = 6
 
-app = FastAPI(title="fakegpt", version="0.2.0", docs_url=None, redoc_url=None)
+app = FastAPI(title="fakegpt", version="0.3.0", docs_url=None, redoc_url=None)
+
+_INDEX_CACHE: Optional[str] = None
 
 
 def content_to_text(content: Any) -> str:
@@ -151,6 +169,10 @@ def make_cot(min_len: int = COT_MIN_LEN) -> str:
     return "".join(parts).rstrip("，。") + "。"
 
 
+def lines_for(model_id: str) -> List[str]:
+    return MODEL_LINES.get(model_id) or MODEL_LINES[MODEL_ID]
+
+
 def decide(body: dict) -> dict:
     messages = body.get("messages") or []
     user_turns = [
@@ -162,14 +184,21 @@ def decide(body: dict) -> dict:
     turn_index = max(len(user_turns) - 1, 0)
     first_text = content_to_text(user_turns[0].get("content")).lower() if user_turns else ""
 
+    model_id = str(body.get("model") or MODEL_ID).strip()
+    model_key = model_id.lower()
+
+    is_amria = model_key == "amria"
+    is_gunmu = model_key in GUNMU_IDS
     is_greeting = len(user_turns) == 1 and any(h in first_text for h in GREETING_HINTS)
-    is_amria = str(body.get("model") or "").strip().lower() == "amria"
 
     tool_call: Optional[dict] = None
     if is_amria:
         text: Optional[str] = AMRIA_LINES[turn_index % len(AMRIA_LINES)]
+    elif is_gunmu:
+        text = "."
     elif is_greeting:
-        text = IDENTITY_LINE
+        pool = lines_for(model_id)
+        text = pool[turn_index % len(pool)]
     elif tools and TOOL_MODE == "empty":
         text = None
         fn = (tools[0] or {}).get("function") or {}
@@ -183,22 +212,38 @@ def decide(body: dict) -> dict:
 
     if is_amria:
         cot = AMRIA_THOUGHT if COT_ENABLED else ""
+    elif is_gunmu:
+        cot = ""
     else:
         cot = make_cot() if (COT_ENABLED and not is_greeting) else ""
 
     return {"text": text, "tool_call": tool_call, "cot": cot}
 
 
+def render_index() -> str:
+    global _INDEX_CACHE
+    if _INDEX_CACHE is not None:
+        return _INDEX_CACHE
+    path = Path(__file__).with_name("index.html")
+    html = path.read_text(encoding="utf-8")
+    models = [{"id": mid, "owned_by": owner} for mid, owner in MODEL_CATALOG]
+    html = html.replace("__MODELS__", json.dumps(models, ensure_ascii=False))
+    html = html.replace("__QUOTES__", json.dumps(MODEL_LINES, ensure_ascii=False))
+    _INDEX_CACHE = html
+    return html
+
+
 @app.get("/")
-async def index() -> PlainTextResponse:
-    return PlainTextResponse(
-        "fakegpt is running.\n"
-        "This is NOT a real OpenAI endpoint.\n\n"
-        "base_url = http://127.0.0.1:8000/v1\n"
-        f"default  = {MODEL_ID}\n"
-        f"models   = {len(MODEL_CATALOG)} 个（含 MOSS-550W / GunMu / DeepSeek-R2 …）\n"
-        f"cot      = {'on' if COT_ENABLED else 'off'}\n"
-    )
+async def index() -> HTMLResponse:
+    try:
+        return HTMLResponse(render_index())
+    except FileNotFoundError:
+        return PlainTextResponse(
+            "fakegpt is running.\n"
+            "This is NOT a real OpenAI endpoint.\n"
+            f"models = {len(MODEL_CATALOG)}\n",
+            status_code=200,
+        )
 
 
 @app.get("/v1/models")
